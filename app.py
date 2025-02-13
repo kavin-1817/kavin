@@ -1,11 +1,9 @@
-
 import streamlit as st
 import time
 import random
-import os
-import tempfile
 from PyPDF2 import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+import os
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import google.generativeai as genai
 from langchain_community.vectorstores import FAISS
@@ -13,72 +11,62 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains.question_answering import load_qa_chain
 from langchain.prompts import PromptTemplate
 from dotenv import load_dotenv
-from pdf2image import convert_from_path
-import pytesseract
-from concurrent.futures import ThreadPoolExecutor
-
-# ✅ Tesseract path configuration for Windows
-if os.name == 'nt':
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\tesseract\tesseract.exe'
-
+# ✅ Move to the first Streamlit command
 st.set_page_config(page_title="DeepDocAI", page_icon="🤖", layout="wide")
 
 # Load environment variables
 load_dotenv()
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# Custom CSS remains the same...
+# Custom CSS for better UI styling
+st.markdown("""
+    <style>
+    .chat-bubble {
+        background-color: #DCF8C6;
+        color: black;
+        padding: 12px;
+        border-radius: 12px;
+        max-width: 80%;
+        box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
+        margin-bottom: 8px;
+        animation: fadeIn 0.5s ease-in-out;
+    }
+    .ai-bubble {
+        background-color: #ECECEC;
+        color: black;
+        padding: 12px;
+        border-radius: 12px;
+        max-width: 80%;
+        box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
+        margin-bottom: 8px;
+        animation: fadeIn 0.5s ease-in-out;
+    }
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .typing {
+        font-size: 14px;
+        color: #888;
+        animation: blink 1.5s infinite;
+    }
+    @keyframes blink {
+        0% { opacity: 0.2; }
+        50% { opacity: 1; }
+        100% { opacity: 0.2; }
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-def process_pdf(pdf):
-    """Process a single PDF with proper temp file handling"""
-    text = ""
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-            temp_file.write(pdf.getbuffer())
-            temp_path = temp_file.name
-
-        # Extract text from PDF pages
-        pdf_reader = PdfReader(temp_path)
+def get_pdf_text(pdf_docs):
+    """Extract text from PDFs."""
+    text = " "
+    for pdf in pdf_docs:
+        pdf_reader = PdfReader(pdf)
         for page in pdf_reader.pages:
             extracted_text = page.extract_text()
             if extracted_text:
                 text += extracted_text + "\n"
-
-        # Extract text from images using OCR (Tamil language)
-        images = convert_from_path(temp_path)
-        for image in images:
-            # Set Tesseract language to Tamil (tam)
-            text += pytesseract.image_to_string(image, lang='tam') + "\n"
-
-    except Exception as e:
-        st.error(f"Error processing PDF: {str(e)}")
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-    return text
-
-def get_pdf_text(pdf_docs):
-    """Improved parallel processing with error handling"""
-    text = ""
-    if not pdf_docs:
-        return text
-
-    progress_bar = st.progress(0)
-    total_pdfs = len(pdf_docs)
-
-    try:
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = [executor.submit(process_pdf, pdf) for pdf in pdf_docs]
-            for i, future in enumerate(futures):
-                try:
-                    result = future.result()
-                    text += result + "\n"
-                except Exception as e:
-                    st.error(f"Failed to process a PDF: {str(e)}")
-                progress_bar.progress((i + 1) / total_pdfs)
-    except Exception as e:
-        st.error(f"Processing failed: {str(e)}")
-    
     return text
 
 def get_text_chunks(text):
@@ -94,8 +82,11 @@ def get_vector_store(text_chunks):
 
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     try:
-        vector_store = FAISS.from_texts(text_chunks, embedding=embeddings)
-        vector_store.save_local("faiss_index")
+        batch_size = 10  # Process embeddings in smaller batches
+        for i in range(0, len(text_chunks), batch_size):
+            chunk_batch = text_chunks[i : i + batch_size]
+            vector_store = FAISS.from_texts(chunk_batch, embedding=embeddings)
+            vector_store.save_local("faiss_index")
     except Exception as e:
         st.error(f"⚠️ Error in vector storage: {e}")
 
@@ -141,14 +132,14 @@ def display_animated_text(response_text):
 
     with placeholder.container():
         st.markdown('<div class="typing">🤖 AI is typing...</div>', unsafe_allow_html=True)
-        time.sleep(0.5)  # Reduce the thinking time
+        time.sleep(1.5)  # Simulate AI thinking time
 
-    formatted_text = format_response(response_text)
+    formatted_text = format_response(response_text)  # Apply formatting
 
     for char in formatted_text:
         displayed_text += char
         placeholder.markdown(f'<div class="ai-bubble">{displayed_text}</div>', unsafe_allow_html=True)
-        time.sleep(random.uniform(0.005, 0.02))  # Reduce the typing delay
+        time.sleep(random.uniform(0.01, 0.04))  # Random delay for realistic typing effect
 
 def user_input(user_question):
     """Retrieve relevant documents and generate AI response with animation."""
@@ -159,7 +150,7 @@ def user_input(user_question):
     chain = get_conversational_chain()
 
     # Display user question in chat UI
-    st.markdown(f'<div class="chat-bubble">🧑‍💼 You: {user_question}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="chat-bubble">🧑‍💼 **You:** {user_question}</div>', unsafe_allow_html=True)
 
     response = chain(
         {"input_documents": docs, "question": user_question},
@@ -169,10 +160,7 @@ def user_input(user_question):
     display_animated_text(response["output_text"])
 
 def main():
-    st.header("🚀 DeepDocAI - Chat with PDFs (Tamil Support)")
-    
-    # Add system requirement note
-   
+    st.header("🚀 DeepDocAI - Chat with PDFs")
 
     user_question = st.text_input("🔍 Ask a Question from the Uploaded Files")
 
@@ -184,16 +172,8 @@ def main():
         pdf_docs = st.file_uploader("Upload your PDFs and Click on Submit", accept_multiple_files=True)
         
         if st.button("📥 Submit & Process"):
-            if not pdf_docs:
-                st.warning("⚠️ Please upload at least one PDF file")
-                return
-                
             with st.spinner("⚡ Processing PDFs... Please wait."):
                 raw_text = get_pdf_text(pdf_docs)
-                if not raw_text.strip():
-                    st.error("❌ Failed to extract text from PDFs. Check if documents contain text/images.")
-                    return
-                
                 text_chunks = get_text_chunks(raw_text)
                 get_vector_store(text_chunks)
                 st.success("✅ Processing Complete! You can now ask questions.")
